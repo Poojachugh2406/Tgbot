@@ -1,34 +1,29 @@
 /**
  * Telegram ➜ WhatsApp Bridge (Node.js)
  * -----------------------------------
- * - Receives messages from Python bot via HTTP
- * - Sends them to a WhatsApp Group using whatsapp-web.js
+ * - Receives text/images from Python bot via HTTP
+ * - Routes dynamically to different WhatsApp Groups
  */
 const dns = require('dns');
-
 dns.setDefaultResultOrder('ipv4first');
 
-const { Client, LocalAuth } = require('whatsapp-web.js');
+// Added MessageMedia here
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const QRCode = require('qrcode');
 const express = require('express');
 
-// ---------------- CONFIG ---------------- //
-const WHATSAPP_GROUP_NAME = 'Lightning Offers'; // MUST MATCH EXACTLY
 const PORT = 3000;
-// ---------------------------------------- //
-
 const app = express();
-app.use(express.json()); // modern body parser
 
-// WhatsApp state flags
+// 🚨 CRITICAL: Increased limits to handle large Base64 images
+app.use(express.json({ limit: '50mb' })); 
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// WhatsApp state flag
 let isClientReady = false;
-let cachedGroup = null;
-
-// 1️⃣ SETUP WHATSAPP CLIENTconst dns = require('dns');
 dns.setDefaultResultOrder('ipv4first');
-// 
-// const { Client, LocalAuth } = require('whatsapp-web.js');
 
+// 1️⃣ SETUP WHATSAPP CLIENT
 process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'false';
 process.env.PUPPETEER_NAVIGATION_TIMEOUT = '13000000';
 
@@ -52,7 +47,6 @@ const client = new Client({
     }
 });
 
-
 // 2️⃣ QR CODE HANDLING
 client.on('qr', qr => {
     QRCode.toFile('./qr.png', qr, err => {
@@ -66,6 +60,8 @@ client.on('qr', qr => {
         }
     });
 });
+
+
 client.on('ready', async () => {
     console.log('\n✅ WhatsApp Client READY (basic)');
     isClientReady = true;
@@ -103,45 +99,56 @@ client.on('ready', async () => {
 console.log('⏳ Starting WhatsApp client...');
 client.initialize();
 
+
+
+// Helper Function: Find chat dynamically by name
+async function getTargetGroup(groupName) {
+    const chats = await client.getChats();
+    return chats.find(chat => chat.isGroup && chat.name.toLowerCase() === groupName.toLowerCase());
+}
+
 // 5️⃣ API ENDPOINT (CALLED BY PYTHON)
 app.post('/send-message', async (req, res) => {
     if (!isClientReady) {
-        return res.status(503).json({
-            status: 'error',
-            reason: 'WhatsApp client not ready'
-        });
+        return res.status(503).json({ status: 'error', reason: 'WhatsApp client not ready' });
     }
 
-    const { message } = req.body;
+    // Extract message, media (base64 string), and the target group name
+    const { message, media, group_id } = req.body;
 
-    if (!message || typeof message !== 'string') {
-        return res.status(400).json({
-            status: 'error',
-            reason: 'Invalid or empty message'
-        });
+    if (!group_id) {
+        return res.status(400).json({ status: 'error', reason: 'No group_id provided' });
     }
 
-    console.log(`📥 Received from Python:\n${message}\n`);
+    if (!message && !media) {
+        return res.status(400).json({ status: 'error', reason: 'No message or media provided' });
+    }
 
     try {
-        if (!cachedGroup) {
-            return res.status(404).json({
-                status: 'error',
-                reason: 'WhatsApp group not found'
-            });
+        // Find the specific group requested by Python
+        const targetChat = await getTargetGroup(group_id);
+
+        if (!targetChat) {
+            console.error(`❌ Group "${group_id}" NOT FOUND`);
+            return res.status(404).json({ status: 'error', reason: `Group '${group_id}' not found in WhatsApp` });
         }
 
-        await cachedGroup.sendMessage(message);
+        console.log(`\n📥 Forwarding to: "${targetChat.name}"`);
 
-        console.log('🚀 Message forwarded to WhatsApp\n');
+        // Handle Image vs Text Sending
+        if (media) {
+            const mediaObj = new MessageMedia('image/jpeg', media);
+            await targetChat.sendMessage(mediaObj, { caption: message + "\n Dm on wa.me/7719401702\n Queries may not be replied on any other number" });
+            console.log('🚀 Image + Caption forwarded successfully!\n');
+        } else {
+            await targetChat.sendMessage(message);
+            console.log('🚀 Text forwarded successfully!\n');
+        }
 
         res.json({ status: 'success' });
     } catch (err) {
         console.error('❌ WhatsApp send error:', err);
-        res.status(500).json({
-            status: 'error',
-            reason: err.message
-        });
+        res.status(500).json({ status: 'error', reason: err.message });
     }
 });
 
@@ -150,3 +157,12 @@ app.listen(PORT, () => {
     console.log(`🌐 Node server running at http://localhost:${PORT}`);
     console.log('📡 Waiting for Python bot messages...\n');
 });
+
+    // --- CRASH PREVENTION SAFETY NET ---
+process.on('uncaughtException', (err) => {
+    console.error('🚨 UNCAUGHT EXCEPTION (Server kept running):', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('🚨 UNHANDLED REJECTION (Server kept running):', reason);
+}); 

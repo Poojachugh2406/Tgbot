@@ -1,101 +1,118 @@
+import base64
 from typing import Final
-import asyncio
 import aiohttp
-# pip install python-telegram-bot
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-print('Bot is now starting up...')
-
-# API_TOKEN: Final = '8234352611:AAE9rL2-ccRcf44xxd3akvcd4wfIHimoC5I'
-import os  # Add this at the top
-
-# DELETE YOUR TOKEN FROM HERE. Use Environment Variables instead.
-API_TOKEN = os.getenv("TELEGRAM_TOKEN")
-BOT_HANDLE: Final = "tg_wp_whatsapp_bot"
-
-# --- WHATSAPP SENDING LOGIC ---import aiohttp
-
+# ---------------- CONFIGURATION ---------------- #
+API_TOKEN: Final = '8234352611:AAE9rL2-ccRcf44xxd3akvcd4wfIHimoC5I'
 NODE_SERVER_URL = "http://localhost:3000/send-message"
 
+# --- USERNAME MAPPING CONFIGURATION ---
+# Enter the usernames WITHOUT the '@' symbol
+# Example: If your link is t.me/TechNews, put "TechNews"
+SOURCE_USERNAME_1 = "Lightning_deals_smurfie" 
+SOURCE_USERNAME_2 = "Lightning_offers_smurf"
 
-async def send_to_whatsapp(text: str):
+# WhatsApp Destinations
+WHATSAPP_GROUP_1_TARGET = "Lightning Deals"   # Destination for Source 1
+WHATSAPP_GROUP_2_TARGET ="Lightning Offers"       # Destination for Source 2
+# ----------------------------------------------- #
+
+print('Bot is now starting up...')
+
+# --- WHATSAPP SENDING LOGIC ---
+async def send_to_whatsapp(text: str, media: str, target_group: str):
     async with aiohttp.ClientSession() as session:
         payload = {
-            "message": text
+            "message": text,
+            "media": media,
+            "group_id": target_group 
         }
-        async with session.post(NODE_SERVER_URL, json=payload) as response:
-            if response.status == 200:
-                print("✅ Sent to Node.js successfully")
-            else:
-                print(f"❌ Failed to send to Node.js: {response.status}")
+        try:
+            async with session.post(NODE_SERVER_URL, json=payload) as response:
+                if response.status == 200:
+                    print(f"✅ Sent to Node.js (Target: {target_group})")
+                else:
+                    print(f"❌ Node.js Error ({response.status}): {await response.text()}")
+        except Exception as e:
+            print(f"❌ Connection Error: {e}")
 
 
 # --- COMMAND HANDLERS ---
 async def initiate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text('Bot is listening!')
+    await update.message.reply_text('Bot is listening to specific usernames!')
 
 async def assist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text('I forward channel posts to WhatsApp.')
+    await update.message.reply_text('I route posts based on Channel Usernames.')
 
-# --- MESSAGE PROCESSOR ---
+# --- MESSAGE PROCESSOR (CHANNELS) ---
 async def process_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    This specific function handles posts coming from a CHANNEL.
-    """
-    # 1. Get the text from the channel post
-    # Note: In channels, we look at 'channel_post', not 'message'
     post = update.channel_post
+    if not post: return
+
+    # 1. GET USERNAME (Handle case where channel is private/has no username)
+    raw_username = post.chat.username
     
-    if not post:
+    if not raw_username:
+        # If raw_username is None, it's likely a private channel
+        # print(f"⚠️ Ignored post from private channel (ID: {post.chat.id})")
         return
 
-    text: str = post.text
-    chat_title: str = post.chat.title
+    # Normalize to lowercase for easy comparison
+    current_username = raw_username.lower()
+    target_wa_group = None
 
-    print(f'New post in channel "{chat_title}": {text}')
-
-    # 2. Filter logic (Optional: only forward if it contains "Deal")
-    # if "deal" in text.lower():
+    # 2. ROUTING LOGIC (Case Insensitive)
+    if current_username == SOURCE_USERNAME_1.lower():
+        target_wa_group = WHATSAPP_GROUP_1_TARGET
+        print(f"🔄 Source: @{raw_username} -> Routing to: {target_wa_group}")
     
-    # 3. Send to WhatsApp
-    await send_to_whatsapp(text)
-
-
-async def process_group_or_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    This handles normal DMs or Group chats (your old logic)
-    """
-    chat_type: str = update.message.chat.type
-    text: str = update.message.text
+    elif current_username == SOURCE_USERNAME_2.lower():
+        target_wa_group = WHATSAPP_GROUP_2_TARGET
+        print(f"🔄 Source: @{raw_username} -> Routing to: {target_wa_group}")
     
-    print(f'User ({update.message.chat.id}) in {chat_type}: "{text}"')
-    
-    # Your old logic for 'hi'/'hello'
-    if 'hi' in text.lower() or 'hello' in text.lower():
-        await update.message.reply_text("Hello there!")
+    else:
+        # Ignore other channels
+        return
 
-async def log_error(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print(f'Update caused error: {context.error}')
+    # 3. EXTRACT CONTENT
+    text_content = post.text or post.caption or ""
+    media_b64 = None
+
+    # 4. HANDLE PHOTOS
+    if post.photo:
+        try:
+            print(f"📸 Downloading image from @{raw_username}...")
+            photo_obj = post.photo[-1]
+            file_obj = await photo_obj.get_file()
+            image_bytes = await file_obj.download_as_bytearray()
+            media_b64 = base64.b64encode(image_bytes).decode('utf-8')
+        except Exception as e:
+            print(f"⚠️ Error processing image: {e}")
+
+    # 5. SEND
+    if text_content or media_b64:
+        await send_to_whatsapp(text_content, media_b64, target_wa_group)
+
 
 # --- MAIN ---
 if __name__ == '__main__':
-    # increased timeouts to fix your connection issues
-    app = Application.builder().token(API_TOKEN).read_timeout(30).write_timeout(30).build()
+    app = Application.builder()\
+        .token(API_TOKEN)\
+        .read_timeout(60)\
+        .write_timeout(60)\
+        .build()
 
-    # Commands
     app.add_handler(CommandHandler('start', initiate_command))
     app.add_handler(CommandHandler('help', assist_command))
 
-    # HANDLER 1: Listen to Channel Posts
-    # This filter specifically looks for updates from Channels
+    # Listen to Channel Posts
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, process_channel_post))
 
-    # HANDLER 2: Listen to Private/Group Messages
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.ChatType.CHANNEL), process_group_or_private))
+    print('🚀 Username Router Started...')
+    print(f'   Listening for: @{SOURCE_USERNAME_1}')
+    print(f'   Listening for: @{SOURCE_USERNAME_2}')
+    
+    app.run_polling(poll_interval=2)
 
-    # Errors
-    app.add_error_handler(log_error)
-
-    print('Starting polling...')
-    app.run_polling(poll_interval=3)
