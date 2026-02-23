@@ -4,8 +4,22 @@ import aiohttp
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
+<<<<<<< Updated upstream
 # ---------------- CONFIGURATION ---------------- #
 API_TOKEN: Final = '8234352611:AAE9rL2-ccRcf44xxd3akvcd4wfIHimoC5I'
+=======
+print('Bot is now starting up...')
+
+API_TOKEN: Final = '8234352611:AAE9rL2-ccRcf44xxd3akvcd4wfIHimoC5I'
+import os  # Add this at the top
+
+# DELETE YOUR TOKEN FROM HERE. Use Environment Variables instead.
+# API_TOKEN = os.getenv("TELEGRAM_TOKEN")
+BOT_HANDLE: Final = "tg_wp_whatsapp_bot"
+
+# --- WHATSAPP SENDING LOGIC ---import aiohttp
+
+>>>>>>> Stashed changes
 NODE_SERVER_URL = "http://localhost:3000/send-message"
 
 # --- USERNAME MAPPING CONFIGURATION ---

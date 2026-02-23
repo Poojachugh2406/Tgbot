@@ -10,8 +10,12 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+<<<<<<< Updated upstream
     "axios": "^1.13.5",
     "dotenv": "^17.3.1",
+=======
+    "body-parser": "^2.2.2",
+>>>>>>> Stashed changes
     "express": "^5.2.1",
     "node-telegram-bot-api": "^0.67.0",
     "qrcode": "^1.5.4",
